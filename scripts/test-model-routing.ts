@@ -933,12 +933,12 @@ const reqD = buildRequest(
 );
 assert.equal(reqD.request.generationConfig?.maxOutputTokens, 65535);
 
-// Case E: Gemini models send thinkingBudget (high: 8000, medium: 4000, low: 1000, off: 0)
+// Case E: Gemini models send thinkingBudget (high: -1, medium: 4000, low: 1000, off: 0)
 const flash38Model = { ...model, id: "gemini-3.8-flash", maxTokens: 65536 };
 for (const [reasoning, thinkingBudget, runtime] of [
   ["low", 1000, "gemini-3.8-flash-low"],
   ["medium", 4000, "gemini-3.8-flash-medium"],
-  ["high", 8000, "gemini-3.8-flash-high"],
+  ["high", -1, "gemini-3.8-flash-high"],
 ] as const) {
   const request = buildRequest(flash38Model, dummyContext, "test-proj", { reasoning }, runtime);
   assert.equal(request.request.generationConfig?.thinkingConfig?.thinkingBudget, thinkingBudget);
@@ -947,7 +947,7 @@ for (const [reasoning, thinkingBudget, runtime] of [
 
 const flash37Model = { ...model, id: "gemini-3.7-flash", maxTokens: 65536 };
 const flash37 = buildRequest(flash37Model, dummyContext, "test-proj", { reasoning: "high" }, "gemini-3.7-flash-high");
-assert.equal(flash37.request.generationConfig?.thinkingConfig?.thinkingBudget, 8000);
+assert.equal(flash37.request.generationConfig?.thinkingConfig?.thinkingBudget, -1);
 assert.equal(flash37.request.generationConfig?.thinkingConfig?.includeThoughts, true);
 
 const flash36 = buildRequest(

@@ -505,7 +505,7 @@ export function getThinkingConfig(
     if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
     const customBudget = antigravityConfig("THINKING_BUDGET");
     const parsedCustom = customBudget ? Number.parseInt(customBudget, 10) : NaN;
-    const defaultHighBudget = Number.isNaN(parsedCustom) ? 8_000 : parsedCustom;
+    const defaultHighBudget = Number.isNaN(parsedCustom) ? -1 : parsedCustom;
     const thinkingBudget =
       effort === "high" || effort === "xhigh" ? defaultHighBudget : effort === "medium" ? 4_000 : 1_000;
     return { includeThoughts: true, thinkingBudget };
