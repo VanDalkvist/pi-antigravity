@@ -997,20 +997,6 @@ export function mapStopReason(reason: string | undefined): StopReason {
   return reason ? StopReason.Error : StopReason.Stop;
 }
 
-/** Account quota walls. These must stay non-retryable and may fail over to another login. */
-function isAccountQuota429(text: string): boolean {
-  return (
-    /Individual quota reached/i.test(text) ||
-    /Resets? in /i.test(text) ||
-    (!/rate.?limit/i.test(text) && /quota exceeded|exceeded your|daily limit/i.test(text))
-  );
-}
-
-/** Short throttles. Pi retries these; persistent model unavailability must not match. */
-function isRetryableRateLimit(text: string): boolean {
-  return /rate.?limit|too many requests/i.test(text);
-}
-
 /**
  * Keep the numeric status out of non-retryable errors. Pi treats the digits 429 as a
  * retryable provider error even when the friendly text says the model is unavailable.
@@ -1593,10 +1579,9 @@ export function streamAntigravity(
             setLastStatus(response.status);
             if (response.ok) break;
             lastText = await response.text();
-            if (response.status === 429 && isAccountQuota429(lastText)) break;
-            // Generic resource exhaustion is a dead model, not a reason to walk every endpoint.
-            if (response.status === 429 && !isRetryableRateLimit(lastText)) break;
-            if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break;
+            // 429 is account/quota bound; fail over immediately instead of walking other endpoints
+            if (response.status === 429) break;
+            if (![403, 404, 500, 502, 503, 504].includes(response.status)) break;
           }
 
           if (response?.ok) break;
@@ -1655,7 +1640,7 @@ export function streamAntigravity(
             }
           }
           const friendly = friendlyAntigravityError(response?.status, lastText);
-          if (response?.status === 429 && /Quota reached\./i.test(friendly)) {
+          if (response?.status === 429) {
             const next = await failoverToNextAccount(triedAccessTokens);
             if (next) {
               triedAccessTokens.add(next.token);
@@ -1671,7 +1656,6 @@ export function streamAntigravity(
               emptyAttempt = -1;
               continue;
             }
-            throw new Error(friendly);
           }
           throw new Error(
             `Antigravity API error (${publicErrorStatus(response?.status, friendly)}, ${formatRequestDiagnostics({ projectId, runtimeModel })}): ${friendly}`,

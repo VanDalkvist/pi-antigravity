@@ -2,6 +2,7 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import type { AntigravityRouting, ThinkingWire } from "../types/types.js";
 import { ThinkingEffort } from "../types/enums.js";
 import type { AntigravityCatalog } from "./grouping.js";
+import { antigravityConfig } from "../utils/util.js";
 
 export const PROVIDER_ID = "antigravity";
 export const PROVIDER_NAME = "Antigravity";
@@ -502,8 +503,11 @@ export function getThinkingConfig(
   }
   if (modelId.startsWith("gemini-")) {
     if (!effort || effort === "off") return { includeThoughts: false, thinkingBudget: 0 };
+    const customBudget = antigravityConfig("THINKING_BUDGET");
+    const parsedCustom = customBudget ? Number.parseInt(customBudget, 10) : NaN;
+    const defaultHighBudget = Number.isNaN(parsedCustom) ? 8_000 : parsedCustom;
     const thinkingBudget =
-      effort === "high" || effort === "xhigh" ? -1 : effort === "medium" ? 4_000 : 1_000;
+      effort === "high" || effort === "xhigh" ? defaultHighBudget : effort === "medium" ? 4_000 : 1_000;
     return { includeThoughts: true, thinkingBudget };
   }
   return undefined;

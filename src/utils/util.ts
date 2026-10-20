@@ -1,8 +1,65 @@
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { getModelEnum } from "../models/models.js";
+
+function agentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+}
+
+let cachedSettings: Record<string, unknown> | null = null;
+let cachedSettingsTime = 0;
+
+export function loadPiSettings(): Record<string, unknown> {
+  const now = Date.now();
+  if (cachedSettings && now - cachedSettingsTime < 5000) {
+    return cachedSettings;
+  }
+  const settingsPath = join(agentDir(), "settings.json");
+  if (!existsSync(settingsPath)) {
+    cachedSettings = {};
+    cachedSettingsTime = now;
+    return cachedSettings;
+  }
+  try {
+    const raw = JSON.parse(readFileSync(settingsPath, "utf8"));
+    if (isRecord(raw)) {
+      cachedSettings = raw;
+      cachedSettingsTime = now;
+      return cachedSettings;
+    }
+  } catch {
+    // Ignore JSON parse errors
+  }
+  return {};
+}
+
+export function antigravitySetting(key: string): unknown {
+  const settings = loadPiSettings();
+  const agy = settings.antigravity;
+  if (isRecord(agy)) {
+    return agy[key];
+  }
+  return undefined;
+}
 
 export function antigravityEnv(name: string): string | undefined {
   return process.env[`ANTIGRAVITY_${name}`] || process.env[`NOAGY_${name}`];
+}
+
+export function antigravityConfig(name: string): string | undefined {
+  const envVal = antigravityEnv(name);
+  if (envVal !== undefined && envVal.trim() !== "") return envVal.trim();
+  const camelKey = name.toLowerCase().replace(/_([a-z])/g, (_, l) => l.toUpperCase());
+  const settingVal = antigravitySetting(camelKey) ?? antigravitySetting(name);
+  if (typeof settingVal === "string" && settingVal.trim() !== "") {
+    return settingVal.trim();
+  }
+  if (typeof settingVal === "number" || typeof settingVal === "boolean") {
+    return String(settingVal);
+  }
+  return undefined;
 }
 
 /**

@@ -11,15 +11,15 @@ import {
 } from "../diagnostics/diagnostics.js";
 import { assertSafeApiBaseUrl, safeError } from "../utils/security.js";
 import type { AntigravityApiKey, AvailableModelsRaw, DynamicModelInfo } from "../types/types.js";
-import { antigravityEnv, asString, isRecord } from "../utils/util.js";
+import { antigravityConfig, antigravityEnv, asString, isRecord } from "../utils/util.js";
 import { antigravityFetch } from "../utils/http.js";
 import { registerDiscoveredModelEnums, registerModelEnum } from "../models/models.js";
 
 export const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 export const ENDPOINT_FALLBACKS = [
   DEFAULT_ENDPOINT,
-  "https://daily-cloudcode-pa.sandbox.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
+  "https://daily-cloudcode-pa.sandbox.googleapis.com",
 ];
 
 const PROJECT_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -56,18 +56,27 @@ export function defaultProjectId(seed = "antigravity-default"): string {
 export const DEFAULT_PROJECT_ID = defaultProjectId();
 
 export function endpointCandidates(): string[] {
-  const explicit = antigravityEnv("BASE_URL")?.trim();
+  const explicit = antigravityConfig("BASE_URL")?.trim();
   return explicit ? [assertSafeApiBaseUrl(explicit)] : ENDPOINT_FALLBACKS;
 }
 
-// Catalog visibility is gated on this version. 1.2.4 hides Gemini 4 Argon;
-// 1.4.0 is aligned with the current official agy CLI release (#93, #94, #97).
-const DEFAULT_USER_AGENT =
-  "antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)";
+export function detectOsType(platform = process.platform): string {
+  if (platform === "win32") return "windows";
+  if (platform === "darwin") return "darwin";
+  return "linux";
+}
 
-/** Default User-Agent matching pure Antigravity CLI wire fingerprint. */
+export function detectArch(arch = process.arch): string {
+  if (arch === "x64") return "amd64";
+  if (arch === "arm64") return "arm64";
+  return arch;
+}
+
+/** Default User-Agent matching pure Antigravity CLI wire fingerprint dynamically for the host platform. */
 export function defaultUserAgent(): string {
-  return DEFAULT_USER_AGENT;
+  const os = detectOsType();
+  const arch = detectArch();
+  return `antigravity/cli/1.4.3 (aidev_client; os_type=${os}; arch=${arch}; auth_method=consumer)`;
 }
 
 /** HTTP headers for Antigravity API requests matching CLI wire traffic. */
@@ -75,7 +84,7 @@ export function antigravityHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    "User-Agent": antigravityEnv("USER_AGENT") || defaultUserAgent(),
+    "User-Agent": antigravityConfig("USER_AGENT") || defaultUserAgent(),
   };
 }
 
