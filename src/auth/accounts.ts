@@ -9,12 +9,25 @@ import { refreshAntigravityToken } from "./oauth.js";
 
 const ACCOUNTS_FILE = "antigravity-accounts.json";
 const AUTH_FILE = "auth.json";
+const THREAD_ACCOUNTS_FILE = "antigravity-thread-accounts.json";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
 export type StoredAccount = AntigravityOAuthCredentials & {
   accountId: string;
   addedAt: number;
   lastUsedAt: number;
+};
+
+export type ThreadAccountAssignment = {
+  accountId: string;
+  email?: string;
+  assignedAt: number;
+};
+
+export type ThreadAccountStore = {
+  version: 1;
+  nextIndex: number;
+  threads: Record<string, ThreadAccountAssignment>;
 };
 
 type AccountsFile = {
@@ -36,6 +49,10 @@ function agentDir(): string {
 
 function accountsPath(): string {
   return join(agentDir(), ACCOUNTS_FILE);
+}
+
+function threadAccountsPath(): string {
+  return join(agentDir(), THREAD_ACCOUNTS_FILE);
 }
 
 function authPath(): string {
@@ -252,11 +269,12 @@ async function ensureFresh(account: StoredAccount): Promise<StoredAccount> {
   return accountFromCredentials(await refreshAntigravityToken(account), account);
 }
 
-function apiKeyFor(account: StoredAccount): AntigravityApiKey {
+function apiKeyFor(account: StoredAccount): AntigravityApiKey & { accountId?: string } {
   const email = account.email?.trim();
   return {
     token: account.access,
     projectId: account.projectId || defaultProjectId(email || "antigravity-default"),
+    accountId: account.accountId,
   };
 }
 
@@ -303,7 +321,7 @@ export async function removeAccount(selector: string): Promise<StoredAccount | u
  */
 export async function failoverToNextAccount(
   triedAccessTokens: ReadonlySet<string>,
-): Promise<AntigravityApiKey | undefined> {
+): Promise<(AntigravityApiKey & { accountId?: string }) | undefined> {
   syncCurrentAuth();
   const store = loadAccountStore();
   const candidates = sortedAccounts(store).filter(
@@ -324,4 +342,143 @@ export async function failoverToNextAccount(
     }
   }
   return undefined;
+}
+
+export function loadThreadAccountStore(): ThreadAccountStore {
+  const raw = readJsonObject(threadAccountsPath());
+  if (!raw || raw.version !== 1 || typeof raw.threads !== "object" || !raw.threads) {
+    return { version: 1, nextIndex: 0, threads: {} };
+  }
+  return {
+    version: 1,
+    nextIndex: typeof raw.nextIndex === "number" ? raw.nextIndex : 0,
+    threads: raw.threads as Record<string, ThreadAccountAssignment>,
+  };
+}
+
+export function saveThreadAccountStore(store: ThreadAccountStore): void {
+  const keys = Object.keys(store.threads);
+  if (keys.length > 200) {
+    const sorted = keys.sort(
+      (a, b) => (store.threads[a]?.assignedAt || 0) - (store.threads[b]?.assignedAt || 0),
+    );
+    for (let i = 0; i < sorted.length - 120; i++) {
+      delete store.threads[sorted[i]!];
+    }
+  }
+  writePrivateJson(threadAccountsPath(), store);
+}
+
+export function hashThreadKey(key: string): number {
+  return createHash("sha256").update(key).digest().readUInt32BE(0);
+}
+
+/**
+ * Record an explicit or failover account assignment for a thread.
+ * Guarantees that subsequent turns in the same thread stick to this account,
+ * preserving prompt cache and avoiding rate-limit thrashing.
+ */
+export function recordThreadAccountAssignment(threadKey: string, accountId: string): void {
+  try {
+    const store = loadThreadAccountStore();
+    const accountStore = loadAccountStore();
+    const account = accountStore.accounts[accountId];
+    store.threads[threadKey] = {
+      accountId,
+      email: account?.email,
+      assignedAt: Date.now(),
+    };
+    saveThreadAccountStore(store);
+  } catch {
+    // Best-effort non-fatal persistence
+  }
+}
+
+export type StickyAccountResult = {
+  apiKey: AntigravityApiKey & { accountId?: string };
+  accountId: string;
+  email?: string;
+  source: "sticky" | "allocated" | "hash-fallback";
+};
+
+/**
+ * Resolve the account for a specific thread/session using Thread-Sticky Round-Robin:
+ * 1. If this thread previously received an assignment, stick to it (100% prompt cache preservation).
+ * 2. If this is a new thread, allocate the next account via Round-Robin across linked accounts.
+ * 3. If file read/write fails, fall back to deterministic SHA-256 hash bucket.
+ */
+export async function getThreadStickyAccount(
+  threadKey?: string,
+): Promise<StickyAccountResult | undefined> {
+  const strategy = process.env.ANTIGRAVITY_ACCOUNT_STRATEGY?.trim().toLowerCase() || "sticky-round-robin";
+  if (strategy === "active-only") return undefined;
+
+  syncCurrentAuth();
+  const accountStore = loadAccountStore();
+  const accounts = sortedAccounts(accountStore);
+  if (accounts.length <= 1) {
+    return undefined;
+  }
+
+  const normalizedKey = threadKey?.trim() || "default-thread";
+
+  try {
+    const threadStore = loadThreadAccountStore();
+    const existing = threadStore.threads[normalizedKey];
+
+    // 1. Sticky match: thread already assigned to a valid account
+    if (existing && existing.accountId) {
+      const match = accounts.find((a) => a.accountId === existing.accountId);
+      if (match) {
+        const fresh = await ensureFresh(match);
+        fresh.lastUsedAt = Date.now();
+        accountStore.accounts[fresh.accountId] = fresh;
+        saveAccountStore(accountStore);
+        return {
+          apiKey: apiKeyFor(fresh),
+          accountId: fresh.accountId,
+          email: fresh.email,
+          source: "sticky",
+        };
+      }
+    }
+
+    // 2. New thread: allocate next account via Round-Robin
+    const index = threadStore.nextIndex % accounts.length;
+    const selected = accounts[index]!;
+    threadStore.nextIndex = (threadStore.nextIndex + 1) % 1_000_000;
+    threadStore.threads[normalizedKey] = {
+      accountId: selected.accountId,
+      email: selected.email,
+      assignedAt: Date.now(),
+    };
+    saveThreadAccountStore(threadStore);
+
+    const fresh = await ensureFresh(selected);
+    fresh.lastUsedAt = Date.now();
+    accountStore.accounts[fresh.accountId] = fresh;
+    saveAccountStore(accountStore);
+
+    return {
+      apiKey: apiKeyFor(fresh),
+      accountId: fresh.accountId,
+      email: fresh.email,
+      source: "allocated",
+    };
+  } catch {
+    // 3. Fallback to deterministic SHA-256 hash if file read/write throws
+    const index = hashThreadKey(normalizedKey) % accounts.length;
+    const selected = accounts[index]!;
+    try {
+      const fresh = await ensureFresh(selected);
+      return {
+        apiKey: apiKeyFor(fresh),
+        accountId: fresh.accountId,
+        email: fresh.email,
+        source: "hash-fallback",
+      };
+    } catch {
+      return undefined;
+    }
+  }
 }

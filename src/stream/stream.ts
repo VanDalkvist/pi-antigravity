@@ -12,7 +12,11 @@ import {
 } from "@earendil-works/pi-ai";
 // Namespace import: transcript helpers exist on pi-ai >= 0.86; resolved at runtime.
 import * as piAi from "@earendil-works/pi-ai";
-import { failoverToNextAccount } from "../auth/accounts.js";
+import {
+  failoverToNextAccount,
+  getThreadStickyAccount,
+  recordThreadAccountAssignment,
+} from "../auth/accounts.js";
 import {
   antigravityHeaders,
   endpointCandidates,
@@ -33,6 +37,7 @@ import {
   setLastEndpoint,
   setLastError,
   setLastLatencyMs,
+  setLastMaskedEmail,
   setLastMatchedModelDebug,
   setLastProjectId,
   setLastResolvedRuntimeModel,
@@ -55,10 +60,11 @@ import {
   getThinkingConfig,
   PROVIDER_ID,
 } from "../models/models.js";
-import { extractValidationUrl, redactSecrets, safeError } from "../utils/security.js";
+import { extractValidationUrl, maskEmail, redactSecrets, safeError } from "../utils/security.js";
 import {
   ANTIGRAVITY_API,
   type ActiveBlock,
+  type AntigravityApiKey,
   type AntigravityGenerateRequest,
   type AntigravityStreamOptions,
   type ContentBlock,
@@ -77,6 +83,7 @@ import {
   antigravityRequestEnvelope,
   isRecord,
   resolveSessionTrajectory,
+  resolveThreadKey,
   sanitizeText,
 } from "../utils/util.js";
 import { antigravityFetch, prewarmConnection } from "../utils/http.js";
@@ -1509,7 +1516,16 @@ export function streamAntigravity(
     const startTime = Date.now();
     const output = createOutput(model);
     try {
-      let creds = parseApiKey(opts.apiKey);
+      const threadKey = resolveThreadKey(context, opts.sessionId);
+      const stickyResult = await getThreadStickyAccount(threadKey);
+      let creds: AntigravityApiKey & { accountId?: string } = stickyResult
+        ? stickyResult.apiKey
+        : parseApiKey(opts.apiKey);
+      if (stickyResult?.email) {
+        setLastMaskedEmail(maskEmail(stickyResult.email));
+      } else if (creds.accountId) {
+        setLastMaskedEmail(maskEmail(creds.accountId));
+      }
       const triedAccessTokens = new Set<string>([creds.token]);
       const primaryEndpoint = endpointCandidates()[0];
       if (primaryEndpoint) prewarmConnection(primaryEndpoint);
@@ -1645,6 +1661,10 @@ export function streamAntigravity(
             if (next) {
               triedAccessTokens.add(next.token);
               creds = next;
+              if (next.accountId) {
+                recordThreadAccountAssignment(threadKey, next.accountId);
+                setLastMaskedEmail(maskEmail(next.accountId));
+              }
               requestHeaders = antigravityHeaders(creds.token);
               const switchedProject = creds.projectId ? null : await loadCodeAssist(creds.token);
               projectId = resolveProjectId({

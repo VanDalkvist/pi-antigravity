@@ -311,6 +311,8 @@ export default function (pi: ExtensionAPI): void {
         `lastProjectId=${d.projectId || "none"}`,
         `linkedAccounts=${accounts.length || "none"}`,
         `activeAccount=${activeLabel || "none"}`,
+        `lastStreamAccount=${d.maskedEmail || activeLabel || "none"}`,
+        `accountStrategy=${process.env.ANTIGRAVITY_ACCOUNT_STRATEGY || "sticky-round-robin"}`,
         ...(d.latencyMs !== undefined ? [`lastLatencyMs=${d.latencyMs}`] : []),
         `toolSchemaWarnings=${d.toolSchemaWarnings || "none"}`,
         `lastError=${d.error ? redactSecrets(d.error) : "none"}`,

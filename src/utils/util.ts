@@ -215,6 +215,25 @@ export function clearSessionTrajectoryMap(): void {
 }
 
 /**
+ * Resolve a stable thread/session key for sticky account routing and cache preservation.
+ * Prefers BB_THREAD_ID, then explicit sessionId, then deterministic conversationId from transcript.
+ */
+export function resolveThreadKey(
+  context?: {
+    messages?: Array<{ role?: string; timestamp?: number; content?: unknown }>;
+  },
+  sessionId?: string,
+): string {
+  const envThread = process.env.BB_THREAD_ID?.trim();
+  if (envThread) return `bb:${envThread}`;
+
+  if (sessionId?.trim()) return `session:${sessionId.trim()}`;
+
+  const trajectory = resolveSessionTrajectory(context, sessionId);
+  return `conv:${trajectory.conversationId}`;
+}
+
+/**
  * Build request metadata and model labels from legacy Claude flags or envelope options.
  * Supplied IDs are forwarded; absent IDs are generated. Execution labels appear after step 1.
  */

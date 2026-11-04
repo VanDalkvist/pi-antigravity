@@ -15,9 +15,20 @@ export type { OAuthCredentials, OAuthLoginCallbacks } from "./oauth.js";
 export {
   activateAccount,
   failoverToNextAccount,
+  getThreadStickyAccount,
+  hashThreadKey,
   listAccounts,
+  loadThreadAccountStore,
+  recordThreadAccountAssignment,
   rememberAccount,
   removeAccount,
+  saveThreadAccountStore,
   updateRememberedAccount,
 } from "./accounts.js";
-export type { AccountSummary, StoredAccount } from "./accounts.js";
+export type {
+  AccountSummary,
+  StickyAccountResult,
+  StoredAccount,
+  ThreadAccountAssignment,
+  ThreadAccountStore,
+} from "./accounts.js";
