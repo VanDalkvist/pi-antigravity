@@ -1,9 +1,12 @@
 name: Publish Package to npm
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (v*) to publish"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -23,6 +26,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          ref: ${{ inputs.tag }}
 
       - name: Setup Node
         # v6.4.0 — skip cache: yarn; setup-node would invoke Yarn 1
@@ -40,6 +44,17 @@ jobs:
 
       - name: Run checks
         run: yarn check
+
+      - name: Verify release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" == v* ]] || { echo "Expected a v* release tag"; exit 1; }
+          git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1 || { echo "Release tag does not exist"; exit 1; }
+          VERSION="v$(node -p "require('./package.json').version")"
+          [[ "$TAG" == "$VERSION" ]] || { echo "Tag $TAG differs from package version $VERSION"; exit 1; }
 
       - name: Publish to npm
         run: npm publish --access public --provenance
